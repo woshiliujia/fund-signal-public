@@ -359,6 +359,14 @@ def handle_api(path, method, body, query="", user=None):
             if idx_rt else None,
         }
 
+    if path == "/api/lookthrough" and method == "GET":
+        from urllib.parse import parse_qs
+        code = parse_qs(query).get("code", [""])[0].strip()
+        try:
+            return {"ok": True, **fund_core.fetch_fund_lookthrough(code)}
+        except (ValueError, RuntimeError) as exc:
+            raise ApiError(400, str(exc))
+
     if path == "/api/run" and method == "POST":
         force = bool(body.get("force"))
         funds_out, errors, push_results, content = fund_core.run_all(cfg, force=force)

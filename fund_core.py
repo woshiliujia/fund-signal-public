@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 """基金信号核心模块：数据获取、策略计算、推送、配置持久化。"""
 import json
+import html
 import os
 import re
 import time
@@ -46,6 +47,12 @@ DEFAULT_CONFIG = {
 }
 
 HISTORY_LIMIT = 100
+
+# Disclosure data changes only quarterly. Keep a small in-memory cache so a
+# user opening the same fund detail repeatedly does not repeatedly call the
+# third-party archive endpoint.
+_LOOKTHROUGH_CACHE = {}
+_LOOKTHROUGH_CACHE_TTL = 15 * 60
 
 
 def http_get(url, headers=None, timeout=15, retries=3, encoding="utf-8"):
@@ -96,6 +103,53 @@ def fetch_fund_name(code):
     if est and est["name"]:
         return est["name"]
     return None
+
+
+def fetch_fund_lookthrough(code):
+    """Return the latest disclosed top stock positions for a public fund.
+
+    This is disclosure data, not a live portfolio: the period is always
+    returned to make the reporting lag visible in the UI.
+    """
+    if not (isinstance(code, str) and re.fullmatch(r"\d{6}", code)):
+        raise ValueError("基金代码需为 6 位数字")
+    cached = _LOOKTHROUGH_CACHE.get(code)
+    if cached and time.time() - cached[0] < _LOOKTHROUGH_CACHE_TTL:
+        return cached[1]
+    url = ("http://fundf10.eastmoney.com/FundArchivesDatas.aspx?"
+           "type=jjcc&code=%s&topline=10&year=&month=&rt=%d") % (code, int(time.time()))
+    try:
+        text = http_get(url, headers={"Referer": "https://fundf10.eastmoney.com/ccmx_%s.html" % code})
+    except Exception as exc:
+        raise RuntimeError("暂时无法获取基金披露持仓") from exc
+    text = html.unescape(text.replace(r'\\"', '"'))
+    period = re.search(r"(\d{4}年[1-4]季度)股票投资明细.*?截止至：.*?(\d{4}-\d{2}-\d{2})", text, re.S)
+    rows = []
+    row_pattern = re.compile(
+        r"<tr><td>\d+</td><td><a[^>]*>(?P<code>\d{6})</a></td>"
+        r"<td[^>]*><a[^>]*>(?P<name>[^<]+)</a>.*?"
+        r"<td class='tor'>(?P<weight>[\d.]+)%</td>", re.S,
+    )
+    for match in row_pattern.finditer(text):
+        rows.append({
+            "code": match.group("code"),
+            "name": html.unescape(match.group("name")).strip(),
+            "weight_pct": float(match.group("weight")),
+        })
+        if len(rows) == 10:
+            break
+    if not rows:
+        raise RuntimeError("该基金暂无可用的股票持仓披露")
+    result = {
+        "code": code,
+        "period": period.group(1) if period else "最近披露期",
+        "as_of": period.group(2) if period else None,
+        "holdings": rows,
+        "source": "天天基金公开披露持仓",
+        "notice": "持仓按定期报告披露，存在滞后；不代表实时持仓，也不构成投资建议。",
+    }
+    _LOOKTHROUGH_CACHE[code] = (time.time(), result)
+    return result
 
 
 def fetch_fund_history(code, days=60):
