@@ -42,6 +42,17 @@ export FS_ALLOW_PUBLIC_REGISTER=1
 
 登录后，在“我的基金”页点击“截图导入”，选择支付宝、同花顺等 App 的单只基金详情截图。OCR 在运行应用的机器内存中完成：原图和完整识别文本不会由该功能保存。系统会同时按普通文本和稀疏版面识别大号金额，并支持“金额在上、字段标签在下”的排版；仍只返回可编辑的候选字段，必须由你确认后才会创建或更新基金。
 
+默认会优先使用已安装的 PaddleOCR；若不可用会回退到 Tesseract。要启用本地高精度引擎，请使用国内源安装 PaddlePaddle CPU 运行时和可选依赖，并设置 `OCR_ENGINE=paddle` 强制使用它：
+
+```bash
+python3 -m pip install paddlepaddle==3.0.0 -i https://www.paddlepaddle.org.cn/packages/stable/cpu/
+python3 -m pip install -r requirements-ocr-paddle.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
+export PADDLE_PDX_MODEL_SOURCE=BOS
+export OCR_ENGINE=paddle
+```
+
+首次初始化会下载模型文件；`BOS` 使用 Paddle 的国内模型源。若要使用轻量回退引擎，可设置 `OCR_ENGINE=tesseract`。
+
 请只截取必要的单只基金详情；不要上传身份证、银行卡、支付密码、券商登录页、完整资产汇总或包含他人信息的图片。OCR 可能错误识别代码、金额、小数点和正负号，特别是“收益”和“收益率”字段，导入前必须逐项核对。
 
 ## 可选：xalpha 组合分析

@@ -1,0 +1,3 @@
+# Optional high-accuracy local Chinese screenshot OCR.
+# Install PaddlePaddle from its official domestic CPU index first, then:
+paddleocr==2.10.0

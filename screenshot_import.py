@@ -8,6 +8,7 @@ disk or the application database.
 """
 import base64
 import io
+import os
 import re
 
 
@@ -17,6 +18,7 @@ class ScreenshotImportError(Exception):
 
 MAX_IMAGE_BYTES = 8 * 1024 * 1024
 MAX_IMAGE_PIXELS = 12_000_000
+_PADDLE_ENGINE = None
 
 
 def _image_from_data_url(data_url):
@@ -43,7 +45,28 @@ def _image_from_data_url(data_url):
         raise ScreenshotImportError("无法识别截图格式") from exc
 
 
-def _ocr(image):
+def _paddle_ocr(image):
+    """Use PaddleOCR when installed; return lines in visual reading order."""
+    global _PADDLE_ENGINE
+    try:
+        import numpy as np
+        from paddleocr import PaddleOCR
+        if _PADDLE_ENGINE is None:
+            _PADDLE_ENGINE = PaddleOCR(use_angle_cls=True, lang="ch", show_log=False)
+        result = _PADDLE_ENGINE.ocr(np.array(image.convert("RGB")), cls=True)
+        lines = []
+        for block in result or []:
+            for item in block or []:
+                if len(item) > 1 and item[1] and item[1][0]:
+                    lines.append(str(item[1][0]))
+        if not lines:
+            raise RuntimeError("PaddleOCR 未识别出文本")
+        return "\n".join(lines)
+    except Exception as exc:
+        raise ScreenshotImportError("PaddleOCR 识别失败") from exc
+
+
+def _tesseract_ocr(image):
     try:
         import pytesseract
         from PIL import ImageEnhance
@@ -61,6 +84,20 @@ def _ocr(image):
         raise ScreenshotImportError(
             "本机 OCR 不可用。请安装 tesseract、中文语言包和 pytesseract 后重试。"
         ) from exc
+
+
+def _ocr(image):
+    """Prefer the local high-accuracy engine, with an explicit fallback."""
+    engine = os.environ.get("OCR_ENGINE", "auto").strip().lower()
+    if engine not in {"auto", "paddle", "tesseract"}:
+        raise ScreenshotImportError("OCR_ENGINE 仅支持 auto、paddle 或 tesseract")
+    if engine in {"auto", "paddle"}:
+        try:
+            return _paddle_ocr(image)
+        except ScreenshotImportError:
+            if engine == "paddle":
+                raise
+    return _tesseract_ocr(image)
 
 
 def _to_number(raw):
