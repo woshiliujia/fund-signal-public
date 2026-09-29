@@ -1,0 +1,3 @@
+# Optional portfolio analytics. The main signal service runs without these.
+# xalpha may query third-party public data sources while calculating results.
+xalpha>=0.12.4

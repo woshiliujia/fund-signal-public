@@ -40,6 +40,9 @@ nav { padding:20px 12px; border-right:1px solid var(--border); display:flex; fle
 nav::before { content:'工作台'; padding:0 12px 8px; font-size:11px; color:#97a1b7; letter-spacing:.08em; font-weight:700; }
 nav a { padding:10px 12px; font-size:13px; color:var(--muted); text-decoration:none; border-radius:9px; white-space:nowrap; font-weight:600; } .nav-icon { display:inline-block; width:20px; text-align:center; margin-right:7px; }
 nav a:hover { color:var(--primary); background:#f0f3ff; } nav a.active { color:var(--primary); background:var(--primary-soft); }
+.portfolio-note { border:1px solid #f1d99a; background:#fffaf0; color:#775d16; border-radius:12px; padding:12px 14px; font-size:12px; line-height:1.75; }
+.portfolio-status { margin-top:10px; color:var(--muted); font-size:12px; line-height:1.6; }
+.portfolio-result { margin-top:14px; overflow:auto; }
 main { width:100%; max-width:1200px; margin:0 auto; padding:26px 28px 44px; display:grid; gap:16px; }
 .page { display: none; }
 .page.active { display: grid; gap: 16px; }
@@ -237,6 +240,7 @@ tr:last-child td { border-bottom:none; } tr:hover td { background:#fafbff; }
       <a href="#" data-page="funds"><span class="nav-icon">◉</span><span>我的基金</span></a>
       <a href="#" data-page="news"><span class="nav-icon" aria-hidden="true">📰</span><span>消息中心</span></a>
       <a href="#" data-page="history"><span class="nav-icon">◷</span><span>记录</span></a>
+      <a href="#" data-page="portfolio"><span class="nav-icon">◫</span><span>组合分析</span></a>
       <a href="#" data-page="account"><span class="nav-icon">⚙</span><span>设置</span></a>
     </nav>
 
@@ -301,6 +305,24 @@ tr:last-child td { border-bottom:none; } tr:hover td { background:#fafbff; }
         <h2>历史记录 <span class="hint">每次运行留痕，最多100条</span></h2>
         <div id="historyList"></div>
         <div class="empty" id="historyEmpty">暂无记录，点「立即运行」生成</div>
+      </div>
+    </div>
+
+    <!-- xalpha 组合分析 -->
+    <div class="page" id="page-portfolio">
+      <div class="card">
+        <h2>组合分析 <span class="hint">可选 xalpha 集成 · 本次导入不保存</span></h2>
+        <div class="portfolio-note">
+          此功能只用于研究和复核历史流水，不构成投资建议或交易指令。正数 <code>trade</code> 表示申购金额，负数表示赎回份额（xalpha 的原始约定），请在导入前确认记录含义。计算时 xalpha 可能访问第三方数据源；不要输入账户、身份证、券商凭据或任何密钥。
+        </div>
+        <div class="form-grid" style="margin-top:14px">
+          <div style="grid-column:1/-1"><label>交易流水（CSV：date,fund,trade）</label>
+            <textarea id="portfolioLedger" rows="8" spellcheck="false" placeholder="date,fund,trade&#10;2025-01-06,000001,1000&#10;2025-02-06,000001,500&#10;2025-12-08,000001,-100"></textarea>
+          </div>
+        </div>
+        <div class="form-actions"><button id="portfolioRunBtn" onclick="analysePortfolio()">计算组合指标</button></div>
+        <div class="portfolio-status" id="portfolioStatus">正在检查可选依赖…</div>
+        <div class="portfolio-result" id="portfolioResult"></div>
       </div>
     </div>
 
@@ -636,7 +658,7 @@ function navigateTo(page, updateHash = true) {
     'account-ai': { page: 'account', anchor: 'settings-ai' },
   };
   const alias = aliases[page];
-  const valid = ['dashboard', 'funds', 'news', 'history', 'account'];
+  const valid = ['dashboard', 'funds', 'news', 'history', 'portfolio', 'account'];
   const target = alias ? alias.page : (valid.includes(page) ? page : 'dashboard');
   document.querySelectorAll('nav a').forEach(a => a.classList.toggle('active', a.dataset.page === target));
   document.querySelectorAll('.page').forEach(p => p.classList.toggle('active', p.id === 'page-' + target));
@@ -670,6 +692,7 @@ async function loadAll() {
     loadDashboard();
     renderNews();
     loadInvites();
+    loadPortfolioStatus();
     $('addFundBtn').style.display = 'none';
     return;
   }
@@ -682,6 +705,7 @@ async function loadAll() {
   loadDashboard();
   renderNews();
   loadInvites();
+  loadPortfolioStatus();
   $('addFundBtn').style.display = isGuest ? 'none' : '';
 }
 
@@ -1376,9 +1400,66 @@ async function fillAi() {
   try {
     const a = await api('GET', '/api/ai');
     $('aiBaseUrl').value = a.base_url || '';
-    $('aiKey').value = a.api_key || '';
+    $('aiKey').value = '';
+    $('aiKey').placeholder = a.configured ? '已配置（留空则不更改）' : 'sk-...';
     $('aiModel').value = a.model || '';
   } catch (e) {}
+}
+
+function parsePortfolioLedger(value) {
+  const rows = value.trim().split(/\r?\n/).filter(Boolean);
+  if (!rows.length) throw new Error('请粘贴交易流水');
+  const first = rows[0].split(',').map(v => v.trim().toLowerCase());
+  const start = first.join(',') === 'date,fund,trade' ? 1 : 0;
+  return rows.slice(start).map((line, index) => {
+    const parts = line.split(',').map(v => v.trim());
+    if (parts.length !== 3) throw new Error(`第 ${index + start + 1} 行应为 date,fund,trade`);
+    return { date: parts[0], fund: parts[1], trade: Number(parts[2]) };
+  });
+}
+
+function renderPortfolioResult(result) {
+  const host = $('portfolioResult');
+  host.innerHTML = '';
+  const intro = document.createElement('div');
+  intro.className = 'tag';
+  intro.textContent = '资金加权收益率（XIRR）：' + (result.xirr == null ? '无法计算' : Number(result.xirr).toFixed(4));
+  host.appendChild(intro);
+  const rows = result.summary || [];
+  if (!rows.length) return;
+  const columns = Object.keys(rows[0]);
+  const table = document.createElement('table');
+  const thead = document.createElement('thead');
+  const hrow = document.createElement('tr');
+  columns.forEach(column => { const th = document.createElement('th'); th.textContent = column; hrow.appendChild(th); });
+  thead.appendChild(hrow); table.appendChild(thead);
+  const tbody = document.createElement('tbody');
+  rows.forEach(row => { const tr = document.createElement('tr'); columns.forEach(column => { const td = document.createElement('td'); td.textContent = row[column] == null ? '—' : String(row[column]); tr.appendChild(td); }); tbody.appendChild(tr); });
+  table.appendChild(tbody); host.appendChild(table);
+}
+
+async function loadPortfolioStatus() {
+  const status = $('portfolioStatus');
+  const button = $('portfolioRunBtn');
+  if (isGuest) { status.textContent = '登录后可使用组合分析；访客模式不会提交任何流水。'; button.disabled = true; return; }
+  try {
+    const r = await api('GET', '/api/xalpha/status');
+    status.textContent = r.message + (r.version ? ` 当前版本：${r.version}` : '');
+    button.disabled = !r.available;
+  } catch (e) { status.textContent = e.message; button.disabled = true; }
+}
+
+async function analysePortfolio() {
+  if (!requireLogin()) return;
+  const button = $('portfolioRunBtn');
+  try {
+    const transactions = parsePortfolioLedger($('portfolioLedger').value);
+    setBusy(button, true, '计算中…');
+    const r = await api('POST', '/api/xalpha/portfolio', { transactions });
+    renderPortfolioResult(r);
+    $('portfolioStatus').textContent = r.notice || '计算完成。';
+  } catch (e) { toast(e.message, true); }
+  finally { setBusy(button, false); }
 }
 async function saveNewsInterval() {
   if (!requireLogin()) return;

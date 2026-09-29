@@ -1459,9 +1459,13 @@ def get_ai_config():
 
 
 def save_ai_config(cfg):
+    existing = get_ai_config()
+    submitted_key = (cfg.get("api_key") or "").strip()
     clean = {
         "base_url": (cfg.get("base_url") or AI_DEFAULT_CONFIG["base_url"]).strip(),
-        "api_key": (cfg.get("api_key") or "").strip(),
+        # An empty field means "keep the existing secret".  This lets the UI
+        # avoid returning API keys through its GET endpoint.
+        "api_key": submitted_key or existing.get("api_key", ""),
         "model": (cfg.get("model") or AI_DEFAULT_CONFIG["model"]).strip(),
     }
     _pg_exec(

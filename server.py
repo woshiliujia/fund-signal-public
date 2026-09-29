@@ -19,6 +19,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import fund_core
+import xalpha_adapter
 
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 PORT = 8787
@@ -332,6 +333,16 @@ def handle_api(path, method, body, query="", user=None):
     if path == "/api/strategies" and method == "GET":
         return {"strategies": fund_core.STRATEGY_LABELS}
 
+    if path == "/api/xalpha/status" and method == "GET":
+        return xalpha_adapter.status()
+
+    if path == "/api/xalpha/portfolio" and method == "POST":
+        try:
+            result = xalpha_adapter.analyse_portfolio(body.get("transactions"))
+        except xalpha_adapter.XalphaIntegrationError as exc:
+            raise ApiError(400, str(exc))
+        return {"ok": True, **result}
+
     if path == "/api/news" and method == "GET":
         from urllib.parse import parse_qs
         q = parse_qs(query)
@@ -374,7 +385,10 @@ def handle_api(path, method, body, query="", user=None):
 
     if path == "/api/ai" and method == "GET":
         c = fund_core.get_ai_config()
-        return {"base_url": c["base_url"], "api_key": c["api_key"], "model": c["model"]}
+        # Never send a stored credential back to the browser.  The UI leaves
+        # an empty field unchanged on save, so a published deployment does not
+        # accidentally expose the key to a logged-in account.
+        return {"base_url": c["base_url"], "configured": bool(c["api_key"]), "model": c["model"]}
 
     if path == "/api/ai" and method == "PUT":
         fund_core.save_ai_config(body)
