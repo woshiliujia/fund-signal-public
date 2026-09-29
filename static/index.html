@@ -589,7 +589,10 @@ function openRegister(event) { event?.preventDefault(); $('regErr').textContent 
 async function doRegister(event) {
   event?.preventDefault();
   const u = $('regUser').value.trim(), p = $('regPass').value, code = $('regInvite').value.trim();
-  if (!u || !p || !code) { $('regErr').textContent = '请填写完整'; return; }
+  if (!u || !p || ($('regInvite').required && !code)) {
+    $('regErr').textContent = $('regInvite').required ? '请填写完整' : '请填写用户名和密码';
+    return;
+  }
   const btn = $('registerForm').querySelector('[type="submit"]'); setBusy(btn, true, '注册中…');
   try {
     const r = await api('POST', '/api/register', { username: u, password: p, invite_code: code });
