@@ -1,5 +1,8 @@
+import os
 import unittest
+from unittest.mock import patch
 
+import fund_core
 import xalpha_adapter
 
 
@@ -21,6 +24,14 @@ class NormaliseTransactionsTests(unittest.TestCase):
             xalpha_adapter.normalise_transactions([
                 {"date": "2025-01-06", "fund": "000001", "trade": 0}
             ])
+
+
+class RegistrationOptionTests(unittest.TestCase):
+    def test_public_registration_is_opt_in(self):
+        with patch.dict(os.environ, {}, clear=True):
+            self.assertFalse(fund_core.public_registration_enabled())
+        with patch.dict(os.environ, {"FS_ALLOW_PUBLIC_REGISTER": "true"}, clear=True):
+            self.assertTrue(fund_core.public_registration_enabled())
 
 
 if __name__ == "__main__":

@@ -1018,6 +1018,17 @@ DEFAULT_USER = os.environ.get("FS_USER", "admin")
 DEFAULT_PASS = os.environ.get("FS_PASSWORD", "change-this-password")
 
 
+def public_registration_enabled():
+    """Whether this deployment intentionally allows self-service signup.
+
+    Keep the safe default: a public Git repository should not silently turn a
+    deployed instance into an open registration service.
+    """
+    return os.environ.get("FS_ALLOW_PUBLIC_REGISTER", "").strip().lower() in {
+        "1", "true", "yes", "on"
+    }
+
+
 def hash_password(password, salt=None):
     if salt is None:
         salt = _secrets.token_hex(16)
@@ -1086,27 +1097,32 @@ def list_invite_codes(limit=50):
 
 
 def register_user(username, password, invite_code):
-    """邀请码注册。成功返回 None，失败抛 RuntimeError。"""
+    """Register with an invite, or explicit opt-in public registration."""
     username = (username or "").strip()
     if not username or len(username) < 2 or len(username) > 20:
         raise RuntimeError("用户名需 2-20 个字符")
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", username):
+        raise RuntimeError("用户名只能包含字母、数字、下划线或短横线")
     if not password or len(password) < 6:
         raise RuntimeError("密码至少 6 位")
     code = (invite_code or "").strip().upper()
-    if not code:
+    allow_public = public_registration_enabled()
+    if not code and not allow_public:
         raise RuntimeError("需要邀请码（联系管理员获取）")
-    rows = _pg_query("SELECT code, used_by FROM invite_codes WHERE code=%s", (code,))
-    if not rows:
-        raise RuntimeError("邀请码无效")
-    if rows[0]["used_by"]:
-        raise RuntimeError("邀请码已被使用")
+    if code:
+        rows = _pg_query("SELECT code, used_by FROM invite_codes WHERE code=%s", (code,))
+        if not rows:
+            raise RuntimeError("邀请码无效")
+        if rows[0]["used_by"]:
+            raise RuntimeError("邀请码已被使用")
     try:
         _pg_exec("INSERT INTO users(username, password_hash) VALUES(%s,%s)",
                  (username, hash_password(password)))
     except Exception:
         raise RuntimeError("用户名已存在")
-    _pg_exec("UPDATE invite_codes SET used_by=%s, used_at=now() WHERE code=%s",
-             (username, code))
+    if code:
+        _pg_exec("UPDATE invite_codes SET used_by=%s, used_at=now() WHERE code=%s",
+                 (username, code))
     return True
 
 

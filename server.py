@@ -32,7 +32,7 @@ SESSION_LOCK = threading.Lock()
 
 # 访客只可查看脱敏后的总览与公开消息；持仓、历史和估值均须登录。
 READONLY_PATHS = {
-    "/api/dashboard", "/api/news", "/api/strategies",
+    "/api/dashboard", "/api/news", "/api/strategies", "/api/auth/options",
 }
 PUBLIC_PATHS = {"/api/login", "/api/register"}
 
@@ -145,6 +145,9 @@ def handle_api(path, method, body, query="", user=None):
             return {"ok": True, "token": _create_session(body.get("username")),
                     "username": body.get("username")}
         raise ApiError(500, "注册成功但登录失败，请手动登录")
+
+    if path == "/api/auth/options" and method == "GET":
+        return {"public_registration": fund_core.public_registration_enabled()}
 
     if path == "/api/invites" and method == "POST":
         return {"ok": True, "code": fund_core.create_invite_code()}
