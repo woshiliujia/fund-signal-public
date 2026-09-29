@@ -1,0 +1,14 @@
+services:
+  fund-signal:
+    image: fund-signal:latest
+    container_name: fund-signal
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      DB_HOST: 127.0.0.1
+      DB_PORT: 5432
+      DB_USER: fund_signal
+      DB_PASSWORD: change-this-database-password
+      DB_NAME: fund_signal
+      BIND_ALL: "1"
+      TZ: Asia/Shanghai

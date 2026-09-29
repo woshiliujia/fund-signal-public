@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+*.sqlite3
+.env
+.env.*
+!.env.example
+data.json
+db.json
+history.json
+signal_report.txt
+logs/
+*.log
