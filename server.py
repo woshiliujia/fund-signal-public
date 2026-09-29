@@ -19,6 +19,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import fund_core
+import screenshot_import
 import xalpha_adapter
 
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
@@ -116,6 +117,8 @@ class ApiError(Exception):
 
 def _read_body(handler):
     length = int(handler.headers.get("Content-Length") or 0)
+    if length > 11 * 1024 * 1024:
+        raise ApiError(413, "请求过大：截图应小于 8 MB")
     if not length:
         return {}
     raw = handler.rfile.read(length)
@@ -206,6 +209,44 @@ def handle_api(path, method, body, query="", user=None):
         cfg["funds"].append(fund)
         fund_core.save_config(cfg)
         return {"ok": True, "fund": fund}
+
+    if path == "/api/import/screenshot" and method == "POST":
+        try:
+            return {"ok": True, **screenshot_import.recognise(body.get("image"))}
+        except screenshot_import.ScreenshotImportError as exc:
+            raise ApiError(400, str(exc))
+
+    if path == "/api/import/screenshot/confirm" and method == "POST":
+        source = body.get("fields") or {}
+        code = str(source.get("code") or "").strip()
+        if not (code.isdigit() and len(code) == 6):
+            raise ApiError(400, "请确认 6 位基金代码")
+        params = {}
+        for key in ("hold_amount", "reported_profit", "reported_profit_rate", "cost_price"):
+            value = source.get(key)
+            if value in (None, ""):
+                continue
+            try:
+                number = float(value)
+            except (TypeError, ValueError):
+                raise ApiError(400, "%s 必须是数字" % key)
+            if abs(number) > 1_000_000_000:
+                raise ApiError(400, "导入数值超出合理范围，请核对截图")
+            params[key] = number
+        params["screenshot_imported_at"] = datetime.datetime.now().isoformat(timespec="seconds")
+        existing = next((fund for fund in cfg["funds"] if fund["code"] == code), None)
+        if existing:
+            existing.setdefault("params", {}).update(params)
+            fund_core.save_config(cfg)
+            return {"ok": True, "created": False, "fund": existing}
+        name = (source.get("name") or "").strip() or fund_core.fetch_fund_name(code) or code
+        fund = {
+            "id": code, "code": code, "name": name,
+            "strategy": fund_core.STRATEGY_TARGET, "params": params,
+        }
+        cfg["funds"].append(fund)
+        fund_core.save_config(cfg)
+        return {"ok": True, "created": True, "fund": fund}
 
     if path.startswith("/api/funds/") and method == "PUT":
         fund_id = path.split("/")[-1]

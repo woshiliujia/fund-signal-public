@@ -267,7 +267,7 @@ tr:last-child td { border-bottom:none; } tr:hover td { background:#fafbff; }
     <!-- 我的基金 -->
     <div class="page" id="page-funds">
       <div class="card">
-        <h2>我的基金 <button class="mini-btn" id="addFundBtn" style="margin-left:auto;display:none" onclick="openAddModal()">＋ 添加基金</button></h2>
+        <h2>我的基金 <button class="mini-btn secondary" id="importScreenshotBtn" style="margin-left:auto;display:none" onclick="openScreenshotImport()">⇧ 截图导入</button><button class="mini-btn" id="addFundBtn" style="display:none" onclick="openAddModal()">＋ 添加基金</button></h2>
         <table>
           <thead><tr><th>基金</th><th>策略摘要</th><th>最近信号</th><th style="text-align:right">操作</th></tr></thead>
           <tbody id="fundList"></tbody>
@@ -412,6 +412,30 @@ tr:last-child td { border-bottom:none; } tr:hover td { background:#fafbff; }
     <div class="form-actions" style="justify-content:flex-end">
       <button class="ghost" onclick="closeModal('addModal')">取消</button>
       <button onclick="addFund()">添加</button>
+    </div>
+  </div>
+</div>
+
+<!-- 截图导入 -->
+<div class="modal-mask" id="screenshotImportModal" onclick="if(event.target === this) closeModal('screenshotImportModal')">
+  <div class="modal" style="width:580px;max-width:96vw">
+    <h3>从基金详情截图导入</h3>
+    <div class="portfolio-note">截图仅在本机内存中 OCR 处理，不保存原图或完整识别文本。请勿上传身份证、银行卡、支付密码、完整资产截图等无关敏感信息；所有字段须确认后才会写入“我的基金”。</div>
+    <div class="form-grid" style="margin-top:14px">
+      <div style="grid-column:1/-1"><label>支付宝、同花顺等 App 的基金详情截图</label><input id="screenshotFile" type="file" accept="image/png,image/jpeg,image/webp" onchange="onScreenshotSelected()"></div>
+    </div>
+    <div class="form-actions"><button id="screenshotOcrBtn" type="button" onclick="recogniseScreenshot()">识别截图</button></div>
+    <div class="portfolio-status" id="screenshotImportStatus">支持 PNG、JPEG、WebP，最大 8 MB。</div>
+    <div id="screenshotReview" style="display:none;margin-top:14px">
+      <div class="form-grid">
+        <div><label>基金代码（必须确认）</label><input id="importFundCode" list="importFundCodes" inputmode="numeric" maxlength="6"><datalist id="importFundCodes"></datalist></div>
+        <div><label>基金名称（可选）</label><input id="importFundName" maxlength="80" placeholder="留空将自动查询"></div>
+        <div><label>持仓金额（元）</label><input id="importHoldAmount" type="number" step="0.01"></div>
+        <div><label>截图显示的收益（元）</label><input id="importReportedProfit" type="number" step="0.01"></div>
+        <div><label>截图显示的收益率（%）</label><input id="importReportedProfitRate" type="number" step="0.0001"></div>
+        <div><label>持仓成本净值（可选）</label><input id="importCostPrice" type="number" step="0.0001"></div>
+      </div>
+      <div class="form-actions"><button type="button" class="ghost" onclick="openConfigFromImport()">写入后配置策略</button><button type="button" id="screenshotConfirmBtn" onclick="confirmScreenshotImport()">确认并写入我的基金</button></div>
     </div>
   </div>
 </div>
@@ -711,6 +735,7 @@ async function loadAll() {
     loadInvites();
     loadPortfolioStatus();
     $('addFundBtn').style.display = 'none';
+    $('importScreenshotBtn').style.display = 'none';
     return;
   }
   try { cfg = await api('GET', '/api/config'); } catch (e) { cfg = { notify: {}, funds: [] }; }
@@ -724,6 +749,7 @@ async function loadAll() {
   loadInvites();
   loadPortfolioStatus();
   $('addFundBtn').style.display = isGuest ? 'none' : '';
+  $('importScreenshotBtn').style.display = isGuest ? 'none' : '';
 }
 
 function fillNotify() {
@@ -829,6 +855,81 @@ async function runNow(force) {
 
 /* ---------- 基金 ---------- */
 function openAddModal() { if (!requireLogin()) return; $('addModal').classList.add('show'); $('newCode').focus(); }
+
+let screenshotDataUrl = null;
+function openScreenshotImport() {
+  if (!requireLogin()) return;
+  screenshotDataUrl = null;
+  $('screenshotFile').value = '';
+  $('screenshotReview').style.display = 'none';
+  $('screenshotImportStatus').textContent = '支持 PNG、JPEG、WebP，最大 8 MB。';
+  $('screenshotImportModal').classList.add('show');
+}
+function onScreenshotSelected() {
+  screenshotDataUrl = null;
+  $('screenshotReview').style.display = 'none';
+  const file = $('screenshotFile').files && $('screenshotFile').files[0];
+  if (!file) return;
+  if (!/^image\/(png|jpeg|webp)$/.test(file.type) || file.size > 8 * 1024 * 1024) {
+    $('screenshotImportStatus').textContent = '请选择小于 8 MB 的 PNG、JPEG 或 WebP 截图。';
+    return;
+  }
+  const reader = new FileReader();
+  reader.onload = () => { screenshotDataUrl = reader.result; $('screenshotImportStatus').textContent = `已选择：${file.name}。点击“识别截图”。`; };
+  reader.onerror = () => { $('screenshotImportStatus').textContent = '读取截图失败，请重试。'; };
+  reader.readAsDataURL(file);
+}
+function setImportValue(id, value) { $(id).value = value == null ? '' : String(value); }
+async function recogniseScreenshot() {
+  if (!requireLogin()) return;
+  if (!screenshotDataUrl) return toast('请先选择基金详情截图', true);
+  const button = $('screenshotOcrBtn');
+  try {
+    setBusy(button, true, '识别中…');
+    const r = await api('POST', '/api/import/screenshot', { image: screenshotDataUrl });
+    const fields = r.fields || {};
+    const codes = fields.codes || [];
+    const choices = $('importFundCodes'); choices.innerHTML = '';
+    codes.forEach(code => { const option = document.createElement('option'); option.value = code; choices.appendChild(option); });
+    setImportValue('importFundCode', codes[0] || '');
+    setImportValue('importFundName', '');
+    setImportValue('importHoldAmount', fields.hold_amount);
+    setImportValue('importReportedProfit', fields.reported_profit);
+    setImportValue('importReportedProfitRate', fields.reported_profit_rate);
+    setImportValue('importCostPrice', fields.cost_price);
+    $('screenshotReview').style.display = '';
+    $('screenshotImportStatus').textContent = (r.warnings || []).join(' ');
+  } catch (e) { toast(e.message, true); }
+  finally { setBusy(button, false); }
+}
+async function confirmScreenshotImport() {
+  if (!requireLogin()) return;
+  const code = $('importFundCode').value.trim();
+  if (!/^\d{6}$/.test(code)) return toast('请确认 6 位基金代码', true);
+  const button = $('screenshotConfirmBtn');
+  const numberOrBlank = id => $(id).value.trim() === '' ? null : Number($(id).value);
+  try {
+    setBusy(button, true, '写入中…');
+    const r = await api('POST', '/api/import/screenshot/confirm', { fields: {
+      code, name: $('importFundName').value.trim(),
+      hold_amount: numberOrBlank('importHoldAmount'),
+      reported_profit: numberOrBlank('importReportedProfit'),
+      reported_profit_rate: numberOrBlank('importReportedProfitRate'),
+      cost_price: numberOrBlank('importCostPrice'),
+    }});
+    screenshotDataUrl = null;
+    closeModal('screenshotImportModal');
+    toast((r.created ? '已添加：' : '已更新：') + r.fund.name);
+    loadAll();
+  } catch (e) { toast(e.message, true); }
+  finally { setBusy(button, false); }
+}
+function openConfigFromImport() {
+  const code = $('importFundCode').value.trim();
+  const fund = cfg.funds.find(item => item.code === code);
+  if (!fund) return toast('请先确认并写入该基金', true);
+  closeModal('screenshotImportModal'); openConfig(fund.id);
+}
 async function addFund() {
   if (!requireLogin()) return;
   const code = $('newCode').value.trim();

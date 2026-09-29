@@ -12,6 +12,7 @@
 - 账户登录、访客演示与会话管理
 - 可选的 PostgreSQL 持久化
 - 可选的 [xalpha](https://github.com/refraction-ray/xalpha) 交易流水组合分析：组合汇总与资金加权收益率（XIRR）
+- 基金详情截图导入：本机 OCR 提取基金代码、持仓金额、收益、收益率和成本净值，确认后写入持仓
 
 ## 本地运行
 
@@ -36,6 +37,12 @@ export FS_ALLOW_PUBLIC_REGISTER=1
 ```
 
 开放注册前请至少配置 HTTPS、限流/WAF、监控和可用的邮件或人工审核流程。公开 GitHub 仓库不等于应该把运行中的服务也无门槛开放；共享部署通常更适合默认使用邀请码。
+
+### 截图导入与隐私
+
+登录后，在“我的基金”页点击“截图导入”，选择支付宝、同花顺等 App 的单只基金详情截图。OCR 在运行应用的机器内存中完成：原图和完整识别文本不会由该功能保存。系统只返回可编辑的候选字段，必须由你确认后才会创建或更新基金。
+
+请只截取必要的单只基金详情；不要上传身份证、银行卡、支付密码、券商登录页、完整资产汇总或包含他人信息的图片。OCR 可能错误识别代码、金额、小数点和正负号，特别是“收益”和“收益率”字段，导入前必须逐项核对。
 
 ## 可选：xalpha 组合分析
 
@@ -80,7 +87,7 @@ docker run --rm -p 8787:8787 \
 
 ```bash
 python3 -m unittest discover -s tests
-python3 -m py_compile server.py fund_core.py xalpha_adapter.py
+python3 -m py_compile server.py fund_core.py screenshot_import.py xalpha_adapter.py
 ```
 
 ## 依赖与数据源
