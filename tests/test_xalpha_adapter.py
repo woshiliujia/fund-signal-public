@@ -54,6 +54,22 @@ class ScreenshotImportParsingTests(unittest.TestCase):
         self.assertEqual(fields["hold_amount"], 12345.67)
         self.assertEqual(fields["reported_profit_rate"], 1.23)
 
+    def test_pairs_multi_column_asset_card_values_with_their_labels(self):
+        lines = [
+            {"text": "金额（元）", "left": 430, "right": 560, "top": 100, "bottom": 130},
+            {"text": "1,951.30", "left": 400, "right": 600, "top": 150, "bottom": 200},
+            {"text": "昨日收益（元）", "left": 40, "right": 220, "top": 250, "bottom": 280},
+            {"text": "持有收益（元）", "left": 330, "right": 510, "top": 250, "bottom": 280},
+            {"text": "持有收益率", "left": 650, "right": 790, "top": 250, "bottom": 280},
+            {"text": "-83.12", "left": 75, "right": 190, "top": 300, "bottom": 330},
+            {"text": "+119.05", "left": 355, "right": 485, "top": 300, "bottom": 330},
+            {"text": "+6.50%", "left": 675, "right": 785, "top": 300, "bottom": 330},
+        ]
+        fields = screenshot_import.parse_fund_layout(lines)
+        self.assertEqual(fields["hold_amount"], 1951.30)
+        self.assertEqual(fields["reported_profit"], 119.05)
+        self.assertEqual(fields["reported_profit_rate"], 6.50)
+
 
 if __name__ == "__main__":
     unittest.main()

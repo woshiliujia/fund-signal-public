@@ -45,8 +45,8 @@ def _image_from_data_url(data_url):
         raise ScreenshotImportError("无法识别截图格式") from exc
 
 
-def _paddle_ocr(image):
-    """Use PaddleOCR when installed; return lines in visual reading order."""
+def _paddle_ocr_lines(image):
+    """Return PaddleOCR text together with its on-screen bounding boxes."""
     global _PADDLE_ENGINE
     try:
         import numpy as np
@@ -58,12 +58,28 @@ def _paddle_ocr(image):
         for block in result or []:
             for item in block or []:
                 if len(item) > 1 and item[1] and item[1][0]:
-                    lines.append(str(item[1][0]))
+                    box = item[0] or []
+                    if len(box) != 4:
+                        continue
+                    xs = [point[0] for point in box]
+                    ys = [point[1] for point in box]
+                    lines.append({
+                        "text": str(item[1][0]),
+                        "left": min(xs),
+                        "right": max(xs),
+                        "top": min(ys),
+                        "bottom": max(ys),
+                    })
         if not lines:
             raise RuntimeError("PaddleOCR 未识别出文本")
-        return "\n".join(lines)
+        return lines
     except Exception as exc:
         raise ScreenshotImportError("PaddleOCR 识别失败") from exc
+
+
+def _paddle_ocr(image):
+    """Use PaddleOCR when installed; return lines in visual reading order."""
+    return "\n".join(line["text"] for line in _paddle_ocr_lines(image))
 
 
 def _tesseract_ocr(image):
@@ -147,9 +163,94 @@ def parse_fund_details(text):
     }
 
 
+def _normalise_label(text):
+    return re.sub(r"[\s()（）【】\[\]①②③]", "", text or "")
+
+
+def _number_in_text(text, percent=None):
+    match = re.search(r"(?<!\d)([+\-]?\d{1,3}(?:,\d{3})*(?:\.\d+)?)(?![\d.])", text or "")
+    if not match:
+        return None
+    if percent is True and "%" not in text:
+        return None
+    if percent is False and "%" in text:
+        return None
+    return _to_number(match.group(1))
+
+
+def _value_below_label(lines, labels, percent=False):
+    """Pair a card label with the number directly below it using OCR geometry."""
+    normalised_labels = [_normalise_label(label) for label in labels]
+    # Preserve the caller's label priority. For example, an asset-detail card
+    # can show both yesterday's return and holding return; the latter is the
+    # useful import field even if the former happens to be slightly closer.
+    for label in normalised_labels:
+        candidates = []
+        for label_line in lines:
+            if label not in _normalise_label(label_line["text"]):
+                continue
+            label_center = (label_line["left"] + label_line["right"]) / 2
+            label_width = max(1, label_line["right"] - label_line["left"])
+            for value_line in lines:
+                value = _number_in_text(value_line["text"], percent=percent)
+                if value is None:
+                    continue
+                vertical_gap = value_line["top"] - label_line["bottom"]
+                value_center = (value_line["left"] + value_line["right"]) / 2
+                horizontal_gap = abs(value_center - label_center)
+                # One card's value is normally one short row below its label.
+                # The horizontal guard prevents the three profit cards from
+                # crossing into one another.
+                if not -8 <= vertical_gap <= 260:
+                    continue
+                if horizontal_gap > max(180, label_width * 1.35):
+                    continue
+                candidates.append((vertical_gap * 2 + horizontal_gap, value))
+        if candidates:
+            return min(candidates)[1]
+    return None
+
+
+def parse_fund_layout(lines):
+    """Extract fields from an OCR result that retains text positions.
+
+    Financial apps often display several labels on one row and their values on
+    the next.  Plain OCR text loses those columns; PaddleOCR boxes let us keep
+    the label/value association conservative.
+    """
+    return {
+        "hold_amount": _value_below_label(
+            lines, ["持有金额", "持仓金额", "持有市值", "参考市值", "资产金额", "金额"], percent=False
+        ),
+        "reported_profit": _value_below_label(
+            lines, ["持有收益", "累计收益", "收益金额", "昨日收益", "浮动盈亏"], percent=False
+        ),
+        "reported_profit_rate": _value_below_label(
+            lines, ["持有收益率", "累计收益率", "收益率", "浮动盈亏率"], percent=True
+        ),
+        "cost_price": _value_below_label(lines, ["持仓成本", "成本净值", "成本价"], percent=False),
+    }
+
+
 def recognise(data_url):
     image = _image_from_data_url(data_url)
-    details = parse_fund_details(_ocr(image))
+    engine = os.environ.get("OCR_ENGINE", "auto").strip().lower()
+    lines = None
+    if engine in {"auto", "paddle"}:
+        try:
+            lines = _paddle_ocr_lines(image)
+            text = "\n".join(line["text"] for line in lines)
+        except ScreenshotImportError:
+            if engine == "paddle":
+                raise
+            text = _tesseract_ocr(image)
+    else:
+        text = _tesseract_ocr(image)
+    details = parse_fund_details(text)
+    if lines:
+        # Geometry is more reliable for multi-column asset cards, but retain
+        # text parsing for fields that do not have a confident spatial match.
+        details.update({key: value for key, value in parse_fund_layout(lines).items() if value is not None})
     warnings = [
         "OCR 结果可能把基金代码、金额或正负号识别错误；写入前请逐项确认。",
         "截图与完整 OCR 文本不会由此功能保存。",
