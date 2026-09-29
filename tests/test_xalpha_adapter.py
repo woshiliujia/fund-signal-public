@@ -47,6 +47,13 @@ class ScreenshotImportParsingTests(unittest.TestCase):
         self.assertEqual(fields["reported_profit_rate"], 1.23)
         self.assertEqual(fields["cost_price"], 1.2345)
 
+    def test_accepts_amount_above_its_label(self):
+        fields = screenshot_import.parse_fund_details(
+            "000001\n12,345.67 元\n持有金额\n+1.23%\n累计收益率"
+        )
+        self.assertEqual(fields["hold_amount"], 12345.67)
+        self.assertEqual(fields["reported_profit_rate"], 1.23)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -46,7 +46,17 @@ def _image_from_data_url(data_url):
 def _ocr(image):
     try:
         import pytesseract
-        return pytesseract.image_to_string(image, lang="chi_sim+eng", config="--psm 6")
+        from PIL import ImageEnhance
+        # App screenshots often place a large amount in its own visual block.
+        # Read both a normal text block and sparse text layout after enlarging
+        # the image, then let the conservative parser require a nearby label.
+        enlarged = image.resize((image.width * 2, image.height * 2))
+        enhanced = ImageEnhance.Contrast(enlarged).enhance(1.5)
+        blocks = [
+            pytesseract.image_to_string(enhanced, lang="chi_sim+eng", config="--psm 6"),
+            pytesseract.image_to_string(enhanced, lang="chi_sim+eng", config="--psm 11"),
+        ]
+        return "\n".join(block for block in blocks if block)
     except Exception as exc:
         raise ScreenshotImportError(
             "本机 OCR 不可用。请安装 tesseract、中文语言包和 pytesseract 后重试。"
@@ -64,12 +74,22 @@ def _to_number(raw):
 
 def _find_labeled_number(text, labels, percent=False):
     joined = "|".join(re.escape(label) for label in labels)
-    suffix = r"\s*%" if percent else r"(?:\s*(?:元|CNY|￥|¥))?"
-    pattern = re.compile(
-        r"(?:%s)[^\d+\-]{0,18}([+\-]?\d{1,3}(?:,\d{3})*(?:\.\d+)?)%s" % (joined, suffix),
+    suffix = r"\s*%" if percent else r"(?!\s*%)(?:\s*(?:元|CNY|￥|¥))?"
+    number = r"(?<!\d)([+\-]?\d{1,3}(?:,\d{3})*(?:\.\d+)?)(?![\d.])"
+    label_before = re.compile(
+        r"(?:%s)[^\d+\-]{0,24}%s%s" % (joined, number, suffix),
         re.IGNORECASE,
     )
-    match = pattern.search(text)
+    # Large amount cards commonly render the value above the label.  OCR may
+    # preserve that visual order, so accept the inverse arrangement as well.
+    label_after = re.compile(
+        r"(?m)^\s*%s%s\s*\n\s*(?:%s)\s*$" % (number, suffix, joined),
+        re.IGNORECASE,
+    )
+    # Only accept the inverse arrangement when the number occupies the line
+    # immediately above a label.  A broader cross-line match would incorrectly
+    # associate the previous card's amount with the next card's label.
+    match = label_before.search(text) or label_after.search(text)
     return _to_number(match.group(1)) if match else None
 
 
